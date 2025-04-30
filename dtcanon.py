@@ -218,7 +218,7 @@ def parse_value(r):
                     raise ParseError(r, f"Invalid hex character: {r.next}")
                 digits += r.next
                 r.consume()
-                num = int(digits)
+                num = int(digits, base=16)
                 value += bytes(str(digits, "utf-8").lower(), "utf-8")
 
             value += b"]"
