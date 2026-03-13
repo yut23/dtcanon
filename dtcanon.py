@@ -506,6 +506,18 @@ def parse_document(r: Reader) -> tuple[dict[bytes, Node], dict[bytes, Node]]:
     return roots, labels
 
 
+def node_name_sort_key(name: bytes) -> Any:
+    addr = -1
+    id_, at, _addr = name.partition(b"@")
+    if at == b"@":
+        try:
+            addr = int(_addr, 16)
+            name = id_
+        except ValueError:
+            pass
+    return 1 if name.startswith(b"__") else 0, addr, name
+
+
 def print_flat_node(
     node: Node, name: bytes, outfile: IO[str], tag_locations: bool
 ) -> None:
@@ -539,14 +551,14 @@ def print_flat_node(
             )
     print("};", file=outfile)
 
-    for k in sorted(node.children.keys()):
+    for k in sorted(node.children.keys(), key=node_name_sort_key):
         print_flat_node(node.children[k], name + b"/" + k, outfile, tag_locations)
 
 
 def print_flat_document(
     roots: dict[bytes, Node], outfile: IO[str], tag_locations: bool
 ) -> None:
-    for k in sorted(roots.keys()):
+    for k in sorted(roots.keys(), key=node_name_sort_key):
         for flag in sorted(roots[k].flags):
             print(str(flag, "utf-8"), file=outfile)
         if k == b"/":
@@ -568,7 +580,7 @@ def print_dts_node(
                 file=outfile,
             )
 
-    for k in sorted(node.children.keys()):
+    for k in sorted(node.children.keys(), key=node_name_sort_key):
         child = node.children[k]
         if tag_locations:
             assert child.location is not None
@@ -591,7 +603,7 @@ def print_dts_document(
     roots: dict[bytes, Node], outfile: IO[str], tag_locations: bool
 ) -> None:
     print("/dts-v1/;", file=outfile)
-    for k in sorted(roots.keys()):
+    for k in sorted(roots.keys(), key=node_name_sort_key):
         for flag in sorted(roots[k].flags):
             print(str(flag, "utf-8"))
         print(str(k, "utf-8") + " {", file=outfile)
