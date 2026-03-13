@@ -947,6 +947,9 @@ def cleanup_nodes(
                 b"timeout-sec",
                 b"tx-config",
                 b"wakeup-event-action",
+                # from rudi-nx
+                b"camera_mipi_lanes",
+                b"force_bus_start",
                 # from zedbox
                 b"accel_i2c_addr",
                 b"def-addr",
