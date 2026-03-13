@@ -1146,6 +1146,10 @@ while idx < len(sys.argv):
     arg = sys.argv[idx]
     if arg == "-o":
         idx += 1
+        arg = sys.argv[idx]
+        if not (arg.endswith(".dts") or arg.endswith(".dtsi")):
+            print(f"Error: output file {arg!r} must end with '.dts' or '.dtsi'")
+            sys.exit(1)
         outfile = open(sys.argv[idx], "w")
     elif arg.startswith("-o"):
         outfile = open(arg[2:], "w")  # pylint: disable=consider-using-with
