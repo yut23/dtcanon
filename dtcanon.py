@@ -263,7 +263,12 @@ def parse_value(r: Reader) -> bytes:
             value += b'"'
             r.consume()
             while r.next != b'"':
-                if r.next == b"\\":
+                if r.next == b"\\" and r.next2 == b"0":
+                    # split strings at \0
+                    r.consume()
+                    r.consume()
+                    value += b'", "'
+                elif r.next == b"\\":
                     value += r.next
                     r.consume()
                     value += r.next
