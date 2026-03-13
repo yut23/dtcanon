@@ -1130,8 +1130,10 @@ if len(sys.argv) <= 1:
     print("  --clear-phandles: Remove phandle values if no references remain.")
     sys.exit(1)
 
-args = ["cpp", "-nostdinc", "-undef", "-xassembler-with-cpp"]
+dtc_args = ["dtc", "-@", "-I", "dtb", "-O", "dts"]
+cpp_args = ["cpp", "-nostdinc", "-undef", "-xassembler-with-cpp"]
 outfile = sys.stdout
+use_dtc = False
 flatten = False
 tag_locations = False
 symbolize = False
@@ -1152,18 +1154,28 @@ while idx < len(sys.argv):
         symbolize = True
     elif arg == "--clear-phandles":
         clear_phandles = True
+    elif arg.endswith(".dtb") and os.path.exists(arg):
+        dtc_args.append(arg)
+        use_dtc = True
     else:
-        args += [arg]
+        cpp_args.append(arg)
     idx += 1
 
+cpp_stdin = None
+if use_dtc:
+    # pylint: disable-next=consider-using-with
+    dtc_proc = subprocess.Popen(dtc_args, stdout=subprocess.PIPE)
+    cpp_stdin = dtc_proc.stdout
 # pylint: disable-next=consider-using-with
-proc = subprocess.Popen(args, stdout=subprocess.PIPE)
-assert proc.stdout
-r = Reader(proc.stdout)
+cpp_proc = subprocess.Popen(cpp_args, stdin=cpp_stdin, stdout=subprocess.PIPE)
+assert cpp_proc.stdout
+r = Reader(cpp_proc.stdout)
 
 try:
     roots, labels = parse_document(r)
-    proc.wait()
+    if use_dtc:
+        dtc_proc.wait()
+    cpp_proc.wait()
 
     if symbolize:
         symbolize_document(roots, clear_phandles)
