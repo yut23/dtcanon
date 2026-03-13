@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
+# pylint: disable=redefined-outer-name, too-many-branches
+# ruff: noqa: E741
 
+import os
+import subprocess
 import sys
 import traceback
-import subprocess
-import os
+
 
 class Reader:
+    # pylint: disable=too-few-public-methods
     def __init__(self, f):
         self.f = f
         self.next = f.read(1)
@@ -23,6 +27,7 @@ class Reader:
         self.next = self.next2
         self.next2 = self.f.read(1)
 
+
 class Node:
     def __init__(self, parent):
         self.parent = parent
@@ -38,16 +43,16 @@ class Node:
         for k in self.parent.children:
             if self.parent.children[k] is self:
                 return k
+        assert False
 
     def path(self):
         if self.parent:
             parent_path = self.parent.path()
             if parent_path == b"/":
                 return b"/" + self.name()
-            else:
-                return self.parent.path() + b"/" + self.name()
-        else:
-            return b"/"
+            return self.parent.path() + b"/" + self.name()
+        return b"/"
+
 
 class ParseError(Exception):
     def __init__(self, r, msg, node=None):
@@ -57,10 +62,12 @@ class ParseError(Exception):
         self.msg = msg
         self.node = node
 
+
 def skip(r, ch):
     if r.next != ch:
         raise ParseError(r, "Expected " + str(ch) + ", got " + str(r.next))
     r.consume()
+
 
 def skip_whitespace(r):
     next_line = None
@@ -77,7 +84,7 @@ def skip_whitespace(r):
             while True:
                 if r.next == b"*" and r.next2 == b"/":
                     break
-                elif r.next == b"":
+                if r.next == b"":
                     raise ParseError(r, "Unexpected EOF in comment")
                 r.consume()
         elif r.next == b"#" and r.next2 == b" ":
@@ -89,13 +96,13 @@ def skip_whitespace(r):
                     digits += str(r.next, "utf-8")
                     r.consume()
                 next_line = int(digits)
-            if r.next == b" " and r.next2 == b"\"":
+            if r.next == b" " and r.next2 == b'"':
                 next_file = b""
                 r.consume()
                 r.consume()
-                while r.next != b"\"":
-                    if r.next == b"\\" and r.next2 == b"\"":
-                        next_file += b"\""
+                while r.next != b'"':
+                    if r.next == b"\\" and r.next2 == b'"':
+                        next_file += b'"'
                         r.consume()
                         r.consume()
                     elif r.next == b"\\" and r.next2 == b"\\":
@@ -109,17 +116,19 @@ def skip_whitespace(r):
                 while r.next in b" 0123456789":
                     r.consume()
         else:
-            if next_line != None:
+            if next_line is not None:
                 r.line = next_line
-            if next_file != None:
+            if next_file is not None:
                 r.filename = os.path.basename(next_file)
                 r.filepath = next_file
             break
 
+
 def skip_line(r):
-    while r.next != b"\n" and r.next != b"":
+    while r.next not in {b"\n", b""}:
         r.consume()
     r.consume()
+
 
 def read_ident(r):
     ident = b""
@@ -130,11 +139,13 @@ def read_ident(r):
         ident += ch
         r.consume()
 
+
 def parse_value(r):
+    # pylint: disable=too-many-statements
     value = b""
     while True:
         skip_whitespace(r)
-        if r.next == b";" or r.next == b">":
+        if r.next in {b";", b">"}:
             return value
 
         if r.next == b",":
@@ -147,7 +158,7 @@ def parse_value(r):
 
         if r.next == b"":
             raise ParseError(r, "Unexpected EOF while parsing value")
-        elif r.next == b'"':
+        if r.next == b'"':
             value += b'"'
             r.consume()
             while r.next != b'"':
@@ -188,7 +199,6 @@ def parse_value(r):
                 while r.next in b"0123456789abcdefABCDEF":
                     digits += r.next
                     r.consume()
-                lead = "0x"
                 value += bytes(hex(int(digits, 16)), "utf-8")
             else:
                 digits = leading
@@ -211,14 +221,17 @@ def parse_value(r):
 
                 digits = b""
                 if r.next not in b"0123456789abcdefABCDEF":
-                    raise ParseError(r, f"Invalid hex character: {r.next}")
+                    raise ParseError(
+                        r, f"Invalid hex character: {r.next.decode('utf-8')}"
+                    )
                 digits += r.next
                 r.consume()
                 if r.next not in b"0123456789abcdefABCDEF":
-                    raise ParseError(r, f"Invalid hex character: {r.next}")
+                    raise ParseError(
+                        r, f"Invalid hex character: {r.next.decode('utf-8')}"
+                    )
                 digits += r.next
                 r.consume()
-                num = int(digits, base=16)
                 value += bytes(str(digits, "utf-8").lower(), "utf-8")
 
             value += b"]"
@@ -235,7 +248,6 @@ def parse_value(r):
             value += b"}"
             skip(r, b"}")
         else:
-            lead = r.next
             ident = read_ident(r)
             if ident == b"":
                 raise ParseError(r, "Unknown lead character in value: " + str(r.next))
@@ -245,7 +257,9 @@ def parse_value(r):
                 r.consume()
     return value
 
+
 def parse_node(r, node, labels, pending_label_nodes):
+    # pylint: disable=too-many-statements
     skip(r, b"{")
 
     while True:
@@ -279,7 +293,7 @@ def parse_node(r, node, labels, pending_label_nodes):
             r.consume()
             skip_whitespace(r)
             node.props[name] = True
-        elif r.next == b":" or r.next == b"{":
+        elif r.next in {b":", b"{"}:
             child_labels = set()
             while r.next == b":":
                 r.consume()
@@ -314,20 +328,24 @@ def parse_node(r, node, labels, pending_label_nodes):
 
             parse_node(r, child, labels, pending_label_nodes)
         else:
-            raise ParseError(r, "Expected value or child node, got " + str(r.next), node)
+            raise ParseError(
+                r, "Expected value or child node, got " + str(r.next), node
+            )
+
 
 def parse_document(r):
     labels = {}
     roots = {}
     pending_label_nodes = {}
+
     while True:
         skip_whitespace(r)
         if r.next == b"":
             break
-        elif r.next == b"&":
+        if r.next == b"&":
             r.consume()
             name = read_ident(r)
-            assert(name != b"")
+            assert name != b""
             skip_whitespace(r)
             if name in labels:
                 parse_node(r, labels[name], labels, pending_label_nodes)
@@ -343,14 +361,19 @@ def parse_document(r):
                 skip_whitespace(r)
                 skip(r, b";")
                 continue
-            elif name == b"/delete-node/":
+            if name == b"/delete-node/":
                 skip_whitespace(r)
                 skip(r, b"&")
                 delete_label = read_ident(r)
                 skip(r, b";")
 
                 if delete_label not in labels:
-                    raise ParseError(r, "Got /delete-label/ for non-existent node '" + delete_label + "'")
+                    raise ParseError(
+                        r,
+                        "Got /delete-label/ for non-existent node '"
+                        + delete_label.decode("utf-8")
+                        + "'",
+                    )
 
                 delete_node = labels[delete_label]
                 for k in delete_node.parent.children:
@@ -369,9 +392,13 @@ def parse_document(r):
             parse_node(r, node, labels, pending_label_nodes)
 
     if len(pending_label_nodes) > 0:
-        print("Warning: Undefined labels: " + str(b", ".join(pending_label_nodes.keys()), "utf-8"))
+        print(
+            "Warning: Undefined labels: "
+            + str(b", ".join(pending_label_nodes.keys()), "utf-8")
+        )
 
     return roots, labels
+
 
 def print_flat_node(node, name, outfile, tag_locations):
     if tag_locations:
@@ -395,14 +422,17 @@ def print_flat_node(node, name, outfile, tag_locations):
 
     for k in sorted(node.props.keys()):
         prop = node.props[k]
-        if prop == True:
+        if prop is True:
             print("  " + str(k, "utf-8") + ";", file=outfile)
         else:
-            print("  " + str(k, "utf-8") + " = " + str(prop, "utf-8") + ";", file=outfile)
+            print(
+                "  " + str(k, "utf-8") + " = " + str(prop, "utf-8") + ";", file=outfile
+            )
     print("};", file=outfile)
 
     for k in sorted(node.children.keys()):
         print_flat_node(node.children[k], name + b"/" + k, outfile, tag_locations)
+
 
 def print_flat_document(roots, outfile, tag_locations):
     for k in sorted(roots.keys()):
@@ -413,13 +443,17 @@ def print_flat_document(roots, outfile, tag_locations):
         else:
             print_flat_node(roots[k], k, outfile, tag_locations)
 
+
 def print_dts_node(node, depth, outfile, tag_locations):
     for k in sorted(node.props.keys()):
         prop = node.props[k]
-        if prop == True:
+        if prop is True:
             print("  " * depth + str(k, "utf-8") + ";", file=outfile)
         else:
-            print("  " * depth + str(k, "utf-8") + " = " + str(prop, "utf-8") + ";", file=outfile)
+            print(
+                "  " * depth + str(k, "utf-8") + " = " + str(prop, "utf-8") + ";",
+                file=outfile,
+            )
 
     for k in sorted(node.children.keys()):
         child = node.children[k]
@@ -438,6 +472,7 @@ def print_dts_node(node, depth, outfile, tag_locations):
         print_dts_node(child, depth + 1, outfile, tag_locations)
         print("  " * depth + "};", file=outfile)
 
+
 def print_dts_document(roots, outfile, tag_locations):
     print("/dts-v1/;", file=outfile)
     for k in sorted(roots.keys()):
@@ -447,11 +482,13 @@ def print_dts_document(roots, outfile, tag_locations):
         print_dts_node(roots[k], 1, outfile, tag_locations)
         print("};", file=outfile)
 
+
 def print_labels(labels, outfile):
     for k in sorted(labels.keys()):
         print(str(k, "utf-8") + " = " + str(labels[k].path(), "utf-8"), file=outfile)
 
-def symbolize_nodes(nodes, symbols, path = None):
+
+def symbolize_nodes(nodes, symbols, path=None):
     for name in nodes:
         node = nodes[name]
         if path is None:
@@ -465,6 +502,7 @@ def symbolize_nodes(nodes, symbols, path = None):
             node.labels.add(symbols[subpath])
 
         symbolize_nodes(node.children, symbols, subpath)
+
 
 def symbolize_document(roots):
     if b"/" not in roots:
@@ -484,6 +522,7 @@ def symbolize_document(roots):
 
     symbolize_nodes(roots, symbols)
 
+
 if len(sys.argv) <= 1:
     print("Usage:", sys.argv[0], "[cpp options] [options] file...")
     print()
@@ -494,7 +533,7 @@ if len(sys.argv) <= 1:
     print("               but this is often useful for diffing.")
     print("  --locations: Annotate nodes with their locations in the input file.")
     print("  --symbolize: Add labels to nodes from a symbols table, if any.")
-    exit(1)
+    sys.exit(1)
 
 args = ["cpp", "-nostdinc", "-undef", "-xassembler-with-cpp"]
 outfile = sys.stdout
@@ -508,7 +547,7 @@ while idx < len(sys.argv):
         idx += 1
         outfile = open(sys.argv[idx], "w")
     elif arg.startswith("-o"):
-        outfile = open(arg[2:], "w")
+        outfile = open(arg[2:], "w")  # pylint: disable=consider-using-with
     elif arg == "--flatten":
         flatten = True
     elif arg == "--locations":
@@ -519,11 +558,14 @@ while idx < len(sys.argv):
         args += [arg]
     idx += 1
 
+# pylint: disable-next=consider-using-with
 proc = subprocess.Popen(args, stdout=subprocess.PIPE)
+assert proc.stdout
 r = Reader(proc.stdout)
 
 try:
     roots, labels = parse_document(r)
+    proc.wait()
 
     if symbolize:
         symbolize_document(roots)
@@ -533,7 +575,9 @@ try:
     else:
         print_dts_document(roots, outfile, tag_locations)
 except ParseError as ex:
-    print(f"{str(ex.filename, 'utf-8')}:{ex.line}:{ex.column}: {ex.msg}", file=sys.stderr)
+    print(
+        f"{str(ex.filename, 'utf-8')}:{ex.line}:{ex.column}: {ex.msg}", file=sys.stderr
+    )
     if ex.node:
         print("While parsing node: " + str(ex.node.path(), "utf-8"), file=sys.stderr)
     print("Next few characters:", file=sys.stderr)
@@ -544,4 +588,4 @@ except ParseError as ex:
     print(str(s, "utf-8"))
     print("", file=sys.stderr)
     traceback.print_exception(ex)
-    exit(1)
+    sys.exit(1)
