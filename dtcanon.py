@@ -6,11 +6,13 @@ import os
 import subprocess
 import sys
 import traceback
+from dataclasses import dataclass, field
+from typing import IO, Literal
 
 
 class Reader:
     # pylint: disable=too-few-public-methods
-    def __init__(self, f):
+    def __init__(self, f: IO[bytes]):
         self.f = f
         self.next = f.read(1)
         self.next2 = f.read(1)
@@ -19,7 +21,7 @@ class Reader:
         self.filename = b"unknown"
         self.filepath = b"unknown"
 
-    def consume(self):
+    def consume(self) -> None:
         self.column += 1
         if self.next == b"\n":
             self.line += 1
@@ -28,16 +30,16 @@ class Reader:
         self.next2 = self.f.read(1)
 
 
+@dataclass
 class Node:
-    def __init__(self, parent):
-        self.parent = parent
-        self.props = {}
-        self.children = {}
-        self.labels = set()
-        self.flags = set()
-        self.location = None
+    parent: "Node | None" = field(repr=False)
+    props: dict[bytes, bytes | Literal[True]] = field(default_factory=dict)
+    children: dict[bytes, "Node"] = field(default_factory=dict, repr=False)
+    labels: set[bytes] = field(default_factory=set)
+    flags: set[bytes] = field(default_factory=set)
+    location: tuple[bytes, int, int] | None = None
 
-    def name(self):
+    def name(self) -> bytes:
         if not self.parent:
             return b"/"
         for k in self.parent.children:
@@ -45,7 +47,7 @@ class Node:
                 return k
         assert False
 
-    def path(self):
+    def path(self) -> bytes:
         if self.parent:
             parent_path = self.parent.path()
             if parent_path == b"/":
@@ -53,9 +55,22 @@ class Node:
             return self.parent.path() + b"/" + self.name()
         return b"/"
 
+    def __getitem__(self, prop: bytes) -> bytes:
+        value = self.props[prop]
+        assert isinstance(value, bytes)
+        return value
+
+    def __truediv__(self, path: bytes) -> "Node":
+        path = os.path.normpath(path)
+        key, _, rest = path.partition(b"/")
+        child = self.children[key]
+        if rest:
+            return child / rest
+        return child
+
 
 class ParseError(Exception):
-    def __init__(self, r, msg, node=None):
+    def __init__(self, r: Reader, msg: str, node: Node | None = None):
         self.filename = r.filepath
         self.line = r.line
         self.column = r.column
@@ -63,13 +78,13 @@ class ParseError(Exception):
         self.node = node
 
 
-def skip(r, ch):
+def skip(r: Reader, ch: bytes) -> None:
     if r.next != ch:
         raise ParseError(r, "Expected " + str(ch) + ", got " + str(r.next))
     r.consume()
 
 
-def skip_whitespace(r):
+def skip_whitespace(r: Reader) -> None:
     next_line = None
     next_file = None
     while True:
@@ -124,13 +139,13 @@ def skip_whitespace(r):
             break
 
 
-def skip_line(r):
+def skip_line(r: Reader) -> None:
     while r.next not in {b"\n", b""}:
         r.consume()
     r.consume()
 
 
-def read_ident(r):
+def read_ident(r: Reader) -> bytes:
     ident = b""
     while True:
         ch = r.next
@@ -140,7 +155,7 @@ def read_ident(r):
         r.consume()
 
 
-def parse_value(r):
+def parse_value(r: Reader) -> bytes:
     # pylint: disable=too-many-statements
     value = b""
     while True:
@@ -258,7 +273,12 @@ def parse_value(r):
     return value
 
 
-def parse_node(r, node, labels, pending_label_nodes):
+def parse_node(
+    r: Reader,
+    node: Node,
+    labels: dict[bytes, Node],
+    pending_label_nodes: dict[bytes, Node],
+) -> None:
     # pylint: disable=too-many-statements
     skip(r, b"{")
 
@@ -333,11 +353,10 @@ def parse_node(r, node, labels, pending_label_nodes):
             )
 
 
-def parse_document(r):
-    labels = {}
-    roots = {}
-    pending_label_nodes = {}
-
+def parse_document(r: Reader) -> tuple[dict[bytes, Node], dict[bytes, Node]]:
+    labels: dict[bytes, Node] = {}
+    roots: dict[bytes, Node] = {}
+    pending_label_nodes: dict[bytes, Node] = {}
     while True:
         skip_whitespace(r)
         if r.next == b"":
@@ -376,6 +395,7 @@ def parse_document(r):
                     )
 
                 delete_node = labels[delete_label]
+                assert delete_node.parent is not None
                 for k in delete_node.parent.children:
                     if delete_node.parent.children[k] is delete_node:
                         del delete_node.parent.children[k]
@@ -400,8 +420,11 @@ def parse_document(r):
     return roots, labels
 
 
-def print_flat_node(node, name, outfile, tag_locations):
+def print_flat_node(
+    node: Node, name: bytes, outfile: IO[str], tag_locations: bool
+) -> None:
     if tag_locations:
+        assert node.location is not None
         f, l, c = node.location
         print(f"// {str(f, 'utf-8')}:{l}:{c}", file=outfile)
 
@@ -434,7 +457,9 @@ def print_flat_node(node, name, outfile, tag_locations):
         print_flat_node(node.children[k], name + b"/" + k, outfile, tag_locations)
 
 
-def print_flat_document(roots, outfile, tag_locations):
+def print_flat_document(
+    roots: dict[bytes, Node], outfile: IO[str], tag_locations: bool
+) -> None:
     for k in sorted(roots.keys()):
         for flag in sorted(roots[k].flags):
             print(str(flag, "utf-8"), file=outfile)
@@ -444,7 +469,9 @@ def print_flat_document(roots, outfile, tag_locations):
             print_flat_node(roots[k], k, outfile, tag_locations)
 
 
-def print_dts_node(node, depth, outfile, tag_locations):
+def print_dts_node(
+    node: Node, depth: int, outfile: IO[str], tag_locations: bool
+) -> None:
     for k in sorted(node.props.keys()):
         prop = node.props[k]
         if prop is True:
@@ -458,6 +485,7 @@ def print_dts_node(node, depth, outfile, tag_locations):
     for k in sorted(node.children.keys()):
         child = node.children[k]
         if tag_locations:
+            assert child.location is not None
             f, l, c = child.location
             print("  " * depth + f"// {str(f, 'utf-8')}:{l}:{c}", file=outfile)
 
@@ -473,7 +501,9 @@ def print_dts_node(node, depth, outfile, tag_locations):
         print("  " * depth + "};", file=outfile)
 
 
-def print_dts_document(roots, outfile, tag_locations):
+def print_dts_document(
+    roots: dict[bytes, Node], outfile: IO[str], tag_locations: bool
+) -> None:
     print("/dts-v1/;", file=outfile)
     for k in sorted(roots.keys()):
         for flag in sorted(roots[k].flags):
@@ -483,12 +513,16 @@ def print_dts_document(roots, outfile, tag_locations):
         print("};", file=outfile)
 
 
-def print_labels(labels, outfile):
+def print_labels(labels: dict[bytes, Node], outfile: IO[str]) -> None:
     for k in sorted(labels.keys()):
         print(str(k, "utf-8") + " = " + str(labels[k].path(), "utf-8"), file=outfile)
 
 
-def symbolize_nodes(nodes, symbols, path=None):
+def symbolize_nodes(
+    nodes: dict[bytes, Node],
+    symbols: dict[bytes, bytes],
+    path: bytes | None = None,
+) -> None:
     for name in nodes:
         node = nodes[name]
         if path is None:
@@ -498,13 +532,13 @@ def symbolize_nodes(nodes, symbols, path=None):
         else:
             subpath = path + b"/" + name
 
-        if subpath in symbols:
+        if b"phandle" in node.props:
             node.labels.add(symbols[subpath])
 
         symbolize_nodes(node.children, symbols, subpath)
 
 
-def symbolize_document(roots):
+def symbolize_document(roots: dict[bytes, Node]) -> None:
     if b"/" not in roots:
         print("Symbolize: No '/' node in document!", file=sys.stderr)
         return
@@ -515,9 +549,10 @@ def symbolize_document(roots):
         return
     symbol_table = root.children[b"__symbols__"]
 
-    symbols = {}
-    for label in symbol_table.props:
-        path = symbol_table.props[label][1:-1]
+    symbols: dict[bytes, bytes] = {}
+    for label, raw_path in symbol_table.props.items():
+        assert isinstance(raw_path, bytes)
+        path = raw_path[1:-1]
         symbols[path] = label
 
     symbolize_nodes(roots, symbols)
